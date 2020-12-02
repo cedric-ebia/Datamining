@@ -1,0 +1,303 @@
+---
+title: "R Notebook"
+output: html_notebook
+Author: "Cédric EBIA"
+Date: "11/11/2020"
+---
+
+
+# 1)  Chargement des différents packages
+
+```{r}
+require(arules)
+require(arulesViz)
+require(visNetwork)
+require(ggplot2)
+require(tidyverse)
+require(readr)
+require(questionr)
+```
+
+
+# 2) Chargement de la table d'étude
+
+```{r}
+test_data<-read.csv("transformed_dataset_bis.csv", header = TRUE, sep=",")
+head(test_data,5)
+test_data<-rename(test_data,id= ï..id)
+str(test_data)
+```
+# 3) Transformation sur les modalités
+
+Au vu des différents éléments mentionnés le fichier excel d'analyse (les différents regroupements de modalités à effectuer), nous obtenons les résultats suivants:
+
+  * TOPMPVDEC et PREVDINC qui renvoient tous deux à l'assurance décès. De ce fait, TOPMPVDEC sera transformé en PREVDINC
+  * NPRV et NCART renvoient tous les 2 à la détention d'une carte. Etant donné que dans notre cas, il s'agira forcément de produits bancaires, nous pouvons transformer ces modalités en NCART (Détention d'une carte bancaire)==> Faisant ainsi office de carte de paiement, et de carte bancaire, etc...
+
+```{r}
+## Recodage de test_data$Product
+test_data$Product <- fct_recode(test_data$Product,
+  #"NCART" = "NPAI",
+  "NCART" = "NPRV",
+  "Prevdcinv" = "topMPVDEC",
+  "Prevdcinv" = "GAV",
+  "NCSCA"=  "SP"
+  #Changement avec l'ajout de GAV
+)
+```
+
+
+
+En essayant de constituer la table finale qui nous permettra d'analyser les différents paniers, nous obtenons les résultats suivants:
+
+```{r}
+require(plyr)
+item_list<-ddply(test_data, c("id"),
+                 function (df1)paste(df1$Product,collapse = ","))
+
+item_list<-item_list$V1
+
+
+write.csv(item_list,
+          "ItemList.csv", quote = FALSE, row.names = TRUE)
+head(item_list)
+```
+
+```{r}
+# Exportation pour stats desc sous Excel
+write_excel_csv2(test_data, file = "etude_data.csv")
+```
+
+
+Pour ce qui est du chargement de cette nouvelle table:
+
+
+```{r}
+txn = read.transactions(file="ItemList.csv", 
+                        rm.duplicates= TRUE, 
+                        format="basket",sep=",",cols=1);
+inspect(head(txn,5))
+```
+
+# 4) Quelques statistiques descriptives
+
+En essayant d'obtenir les 10 produits les plus présents dans les différents paniers de produits financiers, nous obtenons les résultats suivants:
+
+```{r}
+itemFrequencyPlot(txn,topN=10,type="absolute")
+```
+
+
+On peut constater que les 10 produits les plus présents dans les différents paniers de consommateurs sont les produits qu'on peut voir plus haut.
+
+  (Plus loin, on pourra noter que seuls les 6 premiers produits sont ceux étant associés à des accolades vides. Dès lors, on peut noter que ces produits constituent le panier de base ou plus simplement les produits phares, présents dans plus de 50% des paniers).
+  
+  * NDAV:Détention Compte Chèque (compte courant)
+  * NCART:Détention carte bancaires
+  * topMLIV:Comptes sur livret
+  * NCSCA:Détention Compte Service
+  * NPAI: Détention carte de paiement
+  * NOCP:Détention Découvert Autorisé
+  * topMH:Contrat Habitation
+Autres produits proches d'un support de 50%  
+  (* topMCNS: Crédit consommation
+  * PJ:Détention Assurances prévoyance déces ou invalidité
+  * topMEPL: Compte epargne logement)
+
+```{r}
+itemFrequencyPlot(txn,support=0.50)
+```
+
+
+En partant du principe que les produits ayant un support de plus de 50% constituent les produits phares de la banque (le panier de produits financiers de base), on peut émettre comme première hypothèse que les premières associations doivent tourner autour de ces produits.
+  
+# 5) Construction des règles d'association
+
+## a) Pour un support de 50% et une confiance de 0.60
+(avec au maximum 3 produits dans l'association)
+
+Nous choisissons un seuil de 60% de confiance étant donné que ce dernier est significativement différent de 0.5 (qui reste beaucoup plus aléatoire) et qu'il pourrait apparaître comme beaucoup plus plausible pour le métier.
+  
+Essayons de déterminer nos premières règles:
+
+
+  
+```{r}
+rules1<- apriori(txn, parameter = list(supp=0.5,conf=0.6,maxlen=3))
+```
+
+A première vue, nous obtenons 73 règles d'association.
+En essayant de les analyser un peu plus en détail:
+
+```{r}
+inspect(sort(rules1, by="lift"))
+```
+
+A première vue, cette première analyse nous permet de dégager des associations intéressantes  mais relativement évidentes étant donné qu'elles se font entre les produits phares.
+
+  * Par exemple, la détention d'un compte service (NCSA) multiplie par 1,18 les chances de souscrire à un découvert autorisé (NOCP)
+  * Une autre association qu'on pourrait montrer est la suivante: La décision d'une carte bancaire (NCART) et d'un compte sur livret (TOPMLIV) multiplie par 1,07 les chances de souscrire à un découvert autorisé (NOCP).
+
+Les lifts les plus faibles sont de 0,98 (et donc très proches de 1). Ces associations relèvent relativement plus de l'évidence.
+
+
+## b) Pour un support de 50% et une confiance de 0.60 (avec au maximum 2 produits dans l'association)
+
+
+```{r}
+rules2<- apriori(txn, parameter = list(supp=0.5,conf=0.6,maxlen=2))
+```
+ 
+  
+Cette fois, nous obtenons 34 règles avec ces différents paramètres.
+
+```{r}
+inspect(sort(rules2, by="lift"))
+```
+
+
+```{r}
+a<-inspect(sort(rules2, by="lift"))
+write.csv2(a, file="regles_evidentes.csv")
+```
+
+
+En prenant soin de se pencher sur les associations dont le lift est supérieur à 1 avec les critères précédents, nous obtenons les résultats suivants: (éventuellement afin de supprimer les doublons)
+
+```{r}
+#inspect(sort(subset(rules2,subset=lift>1), by="lift"))
+```
+
+On peut remarqurer qu'il s'agit des associations essentielles entre les produits de base:
+  
+  * NCSCA et NOCP
+  * topMLIV et NOcp
+  * NCART et NCSCA
+
+
+  * Visualisation des différentes règles
+  
+```{r}
+#plot(rules2, method="graph",  engine='interactive', shading=NA)
+plot(subset(rules2,subset=lift>1), method="graph", control=list(type="items"), cex=0.7)
+```
+
+
+## c) Pour un support de 10% de et une confiance de 0,60 (avec au maximum 2 produits dans l'association)
+
+
+```{r}
+rules3<-apriori(txn, parameter = list(supp=0.1, conf=0.6, maxlen=2))
+```
+
+En essayant d'analyser les associations avec un lift supérieur à 1,15:
+
+```{r}
+inspect(subset(rules3, subset= lift>1.15))
+```
+
+Au vu de la première règle que nous obtenons, on peut se rendre compte que la carte jeune est étroitement liée à la carte bancaire (support de 10% et lift de 1), on pourrait supposer qu'on devrait lier ces deux produits.
+
+  * On peut également noter que la détention d'un crédit habitat (TOPMHBT) multiplie par 1,21 la probabilité de détention d'un contrat habitation (assurance habitation).
+Cette association se réalise dans 24% des cas de crédit habitat (avec une confiance de 0,80). Dès lors, une des recommandations que l'on pourrait effectuer serait de proposer systématiquement un contrat d'assurance habitation aux personnes souhaitant souscrire à un crédit habitation.
+
+  * La détention d'un crédit conso (TOPMCNS) multiplie par 1,16 la probabilité de détention d'un découvert autorisé (NOCP). Le support de cette règle est de 36% et la confiance est de 0,76. (Action à effectuer)
+  
+  * La détention d'un découvert autorisé (NOCP) multiplie par 1,18 la probabilité de détention d'un compte service (NCSA). Le support de cette règle est de 65% et la confiance est de 0,90. (Action à effectuer= Proposer systématiquement les services aux personnes souhaitant souscrire au découvert autorisé. Ils sont sûrement susceptibles de s'interesser aux autres services).
+  
+
+
+
+## d) Pour un support de 10% de et une confiance de 0,50 (avec au maximum 2 produits dans l'association)
+
+
+```{r}
+rules5<-apriori(txn,parameter = list(supp=0.1, conf=0.5, maxlen=2))
+```
+
+En essayant de vérifier les différentes associations à ce seuil, nous obtenons les résultats suivants
+
+```{r}
+inspect(sort(rules5, by="lift"))
+```
+
+  
+Finalement, nous allons retenir une confiance de 50% (dans le sens de 1 personne sur 2), un lift de 1.05 et un support de 10%
+
+```{r}
+#En essayant de voir les bonnes associations
+inspect(sort(subset(rules5,subset=lift>1.10), by="lift"))
+```
+
+```{r}
+b<-inspect(sort(subset(rules5,subset=lift>1.10), by="lift"))
+write.csv2(b, file="regles_evidentes.csv")
+```
+
+
+```{r}
+#Visualisation des éléments pour lesquels le lift est supérieur à 1.15
+plot(subset(rules5,subset=lift>1.1), method="graph", control=list(type="items"), cex=0.7)
+```
+
+
+Pour les produits contraires, nous allons considérer l'ensembke des produits dont le lift est inférieur à 0.98.
+
+```{r}
+inspect(sort(subset(rules5,subset=lift<0.98), by="lift"))
+```
+
+```{r}
+plot(subset(rules5,subset=lift<0.98), method="graph", control=list(type="items"), cex=0.7)
+```
+
+
+En essayant de récupérer la table liée à ces produits:
+
+```{r}
+c<-inspect(sort(subset(rules5,subset=lift<0.98), by="lift"))
+write.csv2(c, file="regles_evidentes.csv")
+```
+
+
+
+## e)  Pour un support de 10% de et une confiance de 0,50 (avec au maximum 3 produits dans l'association)
+
+
+```{r}
+rules4<-apriori(txn, parameter = list(supp=0.1, conf=0.5, maxlen=3))
+```
+ 
+En essayant d'analyser les associations avec un lift supérieur à 1,15:
+
+```{r}
+inspect(sort(rules4, by= "lift"))
+```
+
+Tout d'abord, intéressons nous aux règles d'association ayant les lift les plus élevés.
+  * (topMACT,topMLIV) et topMPEL avec un support de 0,11 
+  * (NOCP,topMHBT) et (tOPMCNS)
+
+```{r}
+inspect(sort(subset(rules4, subset= lift>1.3), by= "lift"))
+```
+
+
+```{r}
+inspect(sort(subset(rules4, subset= lift<0.80), by= "lift"))
+```
+
+## f) Essayons de retrouver les règles évidentes qui ont une confiance supérieure à 0.90 et un support de 10%
+
+
+```{r}
+rules_log<-apriori(txn, parameter = list(conf=0.95, maxlen=2))
+```
+
+En essayant de vérifier la constitution de ces différentes associations, nous obtenons le résultat suivant:
+
+```{r}
+inspect(sort(rules_log, by= "lift"))
+```
+
+
